@@ -2,16 +2,16 @@
  * This file is part of SemanticFusion.
  *
  * Copyright (C) 2017 Imperial College London
- * 
- * The use of the code within this file and all code within files that 
- * make up the software that is SemanticFusion is permitted for 
- * non-commercial purposes only.  The full terms and conditions that 
- * apply to the code within this file are detailed within the LICENSE.txt 
- * file and at <http://www.imperial.ac.uk/dyson-robotics-lab/downloads/semantic-fusion/semantic-fusion-license/> 
- * unless explicitly stated.  By downloading this file you agree to 
+ *
+ * The use of the code within this file and all code within files that
+ * make up the software that is SemanticFusion is permitted for
+ * non-commercial purposes only.  The full terms and conditions that
+ * apply to the code within this file are detailed within the LICENSE.txt
+ * file and at <http://www.imperial.ac.uk/dyson-robotics-lab/downloads/semantic-fusion/semantic-fusion-license/>
+ * unless explicitly stated.  By downloading this file you agree to
  * comply with these terms.
  *
- * If you wish to use any of this code for commercial purposes then 
+ * If you wish to use any of this code for commercial purposes then
  * please email researchcontracts.engineering@imperial.ac.uk.
  *
  */
@@ -35,7 +35,7 @@
 std::vector<ClassColour> load_colour_scheme(std::string filename, int num_classes) {
   std::vector<ClassColour> colour_scheme(num_classes);
   std::ifstream file(filename);
-  std::string str; 
+  std::string str;
   int line_number = 1;
   while (std::getline(file, str))
   {
@@ -62,9 +62,10 @@ int main(int argc, char *argv[])
   const int crf_skip_frames = 500;
   const int crf_iterations = 10;
   // Load the network model and parameters
+  // TODO:
   CaffeInterface caffe;
   // This is for the RGB-D network
-  caffe.Init("../caffe_semanticfusion/models/nyu_rgbd/inference.prototxt","../caffe_semanticfusion/models/nyu_rgbd/inference.caffemodel");
+  caffe.Init("../model/model.pt","../model/model.pt");
   // This is for the RGB network
   //caffe.Init("../caffe/models/nyu_rgb/inference.prototxt","../caffe/models/nyu_rgb/inference.caffemodel");
   const int num_classes = caffe.num_output_classes();
@@ -95,7 +96,7 @@ int main(int argc, char *argv[])
   }
   // Frame numbers for logs
   int frame_num = 0;
-  std::shared_ptr<caffe::Blob<float> > segmented_prob;
+  std::shared_ptr<torch::Tensor> segmented_prob;
   while(!pangolin::ShouldQuit() && log_reader->hasMore()) {
     gui->preCall();
     // Read and perform an elasticFusion update
@@ -106,7 +107,7 @@ int main(int argc, char *argv[])
         std::cout<<"Elastic fusion lost!"<<argv[1]<<std::endl;
         return 1;
       }
-      // This queries the map interface to update the indexes within the table 
+      // This queries the map interface to update the indexes within the table
       // It MUST be done everytime ProcessFrame is performed as long as the map
       // is not performing tracking only (i.e. fine to not call, when working
       // with a static map)
@@ -116,6 +117,7 @@ int main(int argc, char *argv[])
       // We do not need to perform a CNN update every frame, we perform it every
       // 'cnn_skip_frames'
       if (frame_num == 0 || (frame_num > 1 && ((frame_num + 1) % cnn_skip_frames == 0))) {
+        // TODO: change
         if (log_reader->hasDepthFilled()) {
           segmented_prob = caffe.ProcessFrame(log_reader->rgb, log_reader->depthfilled, height, width);
         } else {
@@ -126,7 +128,7 @@ int main(int argc, char *argv[])
       if (use_crf && frame_num % crf_skip_frames == 0) {
         std::cout<<"Performing CRF Update..."<<std::endl;
         semantic_fusion->CRFUpdate(map,crf_iterations);
-      } 
+      }
     }
     frame_num++;
     // This is for outputting the predicted frames
@@ -143,11 +145,11 @@ int main(int argc, char *argv[])
       semantic_fusion->SaveArgMaxPredictions(save_dir,map);
     }
     gui->renderMap(map);
-    gui->displayRawNetworkPredictions("pred",segmented_prob->mutable_gpu_data());
+    gui->displayRawNetworkPredictions("pred",segmented_prob->data_ptr<float>());
     // This is to display a predicted semantic segmentation from the fused map
     semantic_fusion->CalculateProjectedProbabilityMap(map);
-    gui->displayArgMaxClassColouring("segmentation",semantic_fusion->get_rendered_probability()->mutable_gpu_data(),
-                                     num_classes,semantic_fusion->get_class_max_gpu()->gpu_data(),
+    gui->displayArgMaxClassColouring("segmentation",semantic_fusion->get_rendered_probability()->data_ptr<float>(),
+                                     num_classes,semantic_fusion->get_class_max_gpu()->data_ptr<float>(),
                                      semantic_fusion->max_num_components(),map->GetSurfelIdsGpu(),0.0);
     // This one requires the size of the segmentation display to be set in the Gui constructor to 224,224
     gui->displayImg("raw",map->getRawImageTexture());

@@ -2,16 +2,16 @@
  * This file is part of SemanticFusion.
  *
  * Copyright (C) 2017 Imperial College London
- * 
- * The use of the code within this file and all code within files that 
- * make up the software that is SemanticFusion is permitted for 
- * non-commercial purposes only.  The full terms and conditions that 
- * apply to the code within this file are detailed within the LICENSE.txt 
- * file and at <http://www.imperial.ac.uk/dyson-robotics-lab/downloads/semantic-fusion/semantic-fusion-license/> 
- * unless explicitly stated.  By downloading this file you agree to 
+ *
+ * The use of the code within this file and all code within files that
+ * make up the software that is SemanticFusion is permitted for
+ * non-commercial purposes only.  The full terms and conditions that
+ * apply to the code within this file are detailed within the LICENSE.txt
+ * file and at <http://www.imperial.ac.uk/dyson-robotics-lab/downloads/semantic-fusion/semantic-fusion-license/>
+ * unless explicitly stated.  By downloading this file you agree to
  * comply with these terms.
  *
- * If you wish to use any of this code for commercial purposes then 
+ * If you wish to use any of this code for commercial purposes then
  * please email researchcontracts.engineering@imperial.ac.uk.
  *
  */
@@ -21,35 +21,32 @@
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/photo/photo.hpp>
+#include <fmt/format.h>
+#include <torch/script.h>
 
 
 bool CaffeInterface::Init(const std::string& model_path, const std::string& weights) {
-  caffe::Caffe::SetDevice(0);
-  caffe::Caffe::set_mode(caffe::Caffe::GPU);
-  network_.reset(new caffe::Net<float>(model_path, caffe::TEST));
-  network_->CopyTrainedLayersFrom(weights);
-  initialised_ = true;
+  network_.reset(new torch::jit::script::Module);
+  *network_ = torch::jit::load(model_path);
+  // torch::load(*network_, model_path);
+  network_->to(device_);
   return true;
 }
- 
+
 int CaffeInterface::num_output_classes() {
-  if (!initialised_) {
-    return 0;
-  }
-  return network_->output_blobs()[0]->shape()[1];
+  return 14;
 }
 
-std::shared_ptr<caffe::Blob<float> > CaffeInterface::ProcessFrame(const ImagePtr rgb, const DepthPtr depth, 
+std::shared_ptr<torch::Tensor> CaffeInterface::ProcessFrame(const ImagePtr rgb, const DepthPtr depth,
                                   const int height, const int width) {
   if (!initialised_) {
-    return std::shared_ptr<caffe::Blob<float> >();
+    return std::shared_ptr<torch::Tensor>();
   }
   cv::Mat input_image(height,width,CV_8UC3, rgb);
   cv::Mat input_depth(height,width,CV_16UC1, depth);
-  std::vector<caffe::Blob<float>* > inputs = network_->input_blobs();
-  CHECK_EQ(inputs.size(),1) << "Only single inputs supported";
-  const int network_width = inputs[0]->width();
-  const int network_height = inputs[0]->height();
+
+  torch::Tensor inputs = torch::zeros({4,224,224}, torch::ScalarType::Float);
+
   cv::Mat resized_image(network_height,network_width,CV_8UC3);
   cv::resize(input_image,resized_image,resized_image.size(),0,0);
   cv::Mat resized_depth(network_height,network_width,CV_16UC1);
@@ -63,8 +60,9 @@ std::shared_ptr<caffe::Blob<float> > CaffeInterface::ProcessFrame(const ImagePtr
   const unsigned char noDepth = 0;
   cv::inpaint(depthf, (depthf == noDepth), depthf, 5.0, cv::INPAINT_TELEA);
 
-  float* input_data = inputs[0]->mutable_cpu_data();
+  float* input_data = inputs.data_ptr<float>();
   const float mean[] = {104.0,117.0,123.0};
+
   for (int h = 0; h < network_height; ++h) {
     const uchar* image_ptr = resized_image.ptr<uchar>(h);
     const uint16_t* depth_ptr = resized_depth.ptr<uint16_t>(h);
@@ -80,19 +78,22 @@ std::shared_ptr<caffe::Blob<float> > CaffeInterface::ProcessFrame(const ImagePtr
       input_data[b_offset] = b - mean[0];
       input_data[g_offset] = g - mean[1];
       input_data[r_offset] = r - mean[2];
-      if (inputs[0]->channels() == 4) {
+      // if (inputs->channels() == 4) {
         //Convert to m from mm, and remove mean of 2.8m
-        float d = static_cast<float>(depth_ptr[depth_index++]) * (1.0f/1000.0f) ;
-        const int d_offset = ((3 * network_height) + h) * network_width + w;
-        input_data[d_offset] = d - 2.841;
-      }
+      float d = static_cast<float>(depth_ptr[depth_index++]) * (1.0f/1000.0f) ;
+      const int d_offset = ((3 * network_height) + h) * network_width + w;
+      input_data[d_offset] = d - 2.841;
+      // }
     }
   }
-  float loss;
-  const std::vector<caffe::Blob<float>* > output = network_->Forward(inputs,&loss);
+  std::vector<torch::jit::IValue> net_inputs;
+  inputs.to(device_);
+  net_inputs.push_back(inputs);
+  const torch::Tensor output = network_->forward(net_inputs).toTensor().unsqueeze(0);
+  fmt::print("{}\n", fmt::join(output.sizes().vec(),","));
   if (!output_probabilities_) {
-    output_probabilities_.reset(new caffe::Blob<float>(output[0]->shape()));
+    output_probabilities_.reset(new torch::Tensor);
   }
-  output_probabilities_->CopyFrom(*output[0]);
+  *output_probabilities_ = output.unsqueeze(0);
   return output_probabilities_;
 }

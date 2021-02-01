@@ -2,16 +2,16 @@
  * This file is part of SemanticFusion.
  *
  * Copyright (C) 2017 Imperial College London
- * 
- * The use of the code within this file and all code within files that 
- * make up the software that is SemanticFusion is permitted for 
- * non-commercial purposes only.  The full terms and conditions that 
- * apply to the code within this file are detailed within the LICENSE.txt 
- * file and at <http://www.imperial.ac.uk/dyson-robotics-lab/downloads/semantic-fusion/semantic-fusion-license/> 
- * unless explicitly stated.  By downloading this file you agree to 
+ *
+ * The use of the code within this file and all code within files that
+ * make up the software that is SemanticFusion is permitted for
+ * non-commercial purposes only.  The full terms and conditions that
+ * apply to the code within this file are detailed within the LICENSE.txt
+ * file and at <http://www.imperial.ac.uk/dyson-robotics-lab/downloads/semantic-fusion/semantic-fusion-license/>
+ * unless explicitly stated.  By downloading this file you agree to
  * comply with these terms.
  *
- * If you wish to use any of this code for commercial purposes then 
+ * If you wish to use any of this code for commercial purposes then
  * please email researchcontracts.engineering@imperial.ac.uk.
  *
  */
@@ -31,25 +31,25 @@
 #include <unordered_set>
 #include <utility>
 
-namespace std 
+namespace std
 {
   template <class T>
   inline void my_hash_combine(std::size_t & seed, const T & v)
   {
     std::hash<T> hasher;
-    seed ^= hasher(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2); 
+    seed ^= hasher(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
   }
 
-  template<typename S, typename T> struct hash<pair<S, T>> 
+  template<typename S, typename T> struct hash<pair<S, T>>
   {
     inline size_t operator()(const pair<S, T> & v) const
-    {   
+    {
       size_t seed = 0;
       my_hash_combine(seed, v.first);
       my_hash_combine(seed, v.second);
       return seed;
-    }   
-  };  
+    }
+  };
 }
 
 // Basic algorithm for removing old items from probability table
@@ -57,15 +57,15 @@ template<typename T>
 void remove_index(std::vector<T>& vector, const std::vector<int>& to_remove) {
   auto vector_base = vector.begin();
   typename std::vector<T>::size_type down_by = 0;
-  for (auto iter = to_remove.cbegin(); 
-       iter < to_remove.cend(); 
+  for (auto iter = to_remove.cbegin();
+       iter < to_remove.cend();
        iter++, down_by++)
   {
-    typename std::vector<T>::size_type next = (iter + 1 == to_remove.cend() 
-                                      ? vector.size() 
+    typename std::vector<T>::size_type next = (iter + 1 == to_remove.cend()
+                                      ? vector.size()
                                       : *(iter + 1));
-    std::move(vector_base + *iter + 1, 
-              vector_base + next, 
+    std::move(vector_base + *iter + 1,
+              vector_base + next,
               vector_base + *iter - down_by);
   }
   vector.resize(vector.size() - to_remove.size());
@@ -74,19 +74,19 @@ void remove_index(std::vector<T>& vector, const std::vector<int>& to_remove) {
 void SemanticFusionInterface::CalculateProjectedProbabilityMap(const std::unique_ptr<ElasticFusionInterface>& map) {
   const int id_width = map->width();
   const int id_height = map->height();
-  const int table_height = class_probabilities_gpu_->height();
-  const int table_width = class_probabilities_gpu_->width();
+  const int table_height = class_probabilities_gpu_->size(3);
+  const int table_width = class_probabilities_gpu_->size(2);
   renderProbabilityMap(map->GetSurfelIdsGpu(),id_width,id_height,
-                       class_probabilities_gpu_->mutable_gpu_data(),
+                       class_probabilities_gpu_->data_ptr<float>(),
                        table_width,table_height,
-                       rendered_class_probabilities_gpu_->mutable_gpu_data());
+                       rendered_class_probabilities_gpu_->data_ptr<float>());
 }
 
-std::shared_ptr<caffe::Blob<float> > SemanticFusionInterface::get_rendered_probability() {
+std::shared_ptr<torch::Tensor > SemanticFusionInterface::get_rendered_probability() {
   return rendered_class_probabilities_gpu_;
 }
 
-std::shared_ptr<caffe::Blob<float> > SemanticFusionInterface::get_class_max_gpu() {
+std::shared_ptr<torch::Tensor > SemanticFusionInterface::get_class_max_gpu() {
   return class_max_gpu_;
 }
 
@@ -98,20 +98,20 @@ void SemanticFusionInterface::UpdateProbabilityTable(const std::unique_ptr<Elast
 {
   const int new_table_width = map->GetMapSurfelCount();
   const int num_deleted = map->GetMapSurfelDeletedCount();
-  const int table_width = class_probabilities_gpu_->width();
-  const int table_height = class_probabilities_gpu_->height();
+  const int table_width = class_probabilities_gpu_->size(3);
+  const int table_height = class_probabilities_gpu_->size(2);
   updateProbabilityTable(map->GetDeletedSurfelIdsGpu(),num_deleted,current_table_size_,
-                    class_probabilities_gpu_->gpu_data(), table_width, table_height,
-                    new_table_width, class_probabilities_gpu_buffer_->mutable_gpu_data(),
-                    class_max_gpu_->gpu_data(),class_max_gpu_buffer_->mutable_gpu_data());
+                    class_probabilities_gpu_->data_ptr<float>(), table_width, table_height,
+                    new_table_width, class_probabilities_gpu_buffer_->data_ptr<float>(),
+                    class_max_gpu_->data_ptr<float>(),class_max_gpu_buffer_->data_ptr<float>());
   // We then swap the pointers from the buffer to the other one
   class_probabilities_gpu_.swap(class_probabilities_gpu_buffer_);
   class_max_gpu_.swap(class_max_gpu_buffer_);
   current_table_size_ = new_table_width;
 }
 
-int SemanticFusionInterface::UpdateSurfelProbabilities(const int surfel_id, 
-                                                        const std::vector<float>& class_probs) 
+int SemanticFusionInterface::UpdateSurfelProbabilities(const int surfel_id,
+                                                        const std::vector<float>& class_probs)
 {
   assert(static_cast<int>(class_probabilities_.size()) > surfel_id);
   std::vector<float>& surfel_probs = class_probabilities_[surfel_id];
@@ -137,21 +137,22 @@ int SemanticFusionInterface::UpdateSurfelProbabilities(const int surfel_id,
   return -1;
 }
 
-void SemanticFusionInterface::UpdateProbabilities(std::shared_ptr<caffe::Blob<float> > probs,
+void SemanticFusionInterface::UpdateProbabilities(std::shared_ptr<torch::Tensor> probs,
                                       const std::unique_ptr<ElasticFusionInterface>& map)
 {
-  CHECK_EQ(num_classes_,probs->channels());
+  // CHECK_EQ(num_classes_,probs->size(0);
   const int id_width = map->width();
   const int id_height = map->height();
-  const int prob_width = probs->width();
-  const int prob_height = probs->height();
-  const int prob_channels = probs->channels();
-  const int map_size = class_probabilities_gpu_->width();
-  fuseSemanticProbabilities(map->GetSurfelIdsGpu(),id_width,id_height,probs->gpu_data(),
+  const int prob_width = probs->size(2);
+  const int prob_height = probs->size(1);
+  const int prob_channels = probs->size(0);
+  const int map_size = class_probabilities_gpu_->size(3);
+
+  fuseSemanticProbabilities(map->GetSurfelIdsGpu(),id_width,id_height, probs->data_ptr<float>(),
                     prob_width,prob_height,prob_channels,
-                    class_probabilities_gpu_->mutable_gpu_data(),
-                    class_max_gpu_->mutable_gpu_data(),map_size);
-  map->UpdateSurfelClassGpu(map_size,class_max_gpu_->gpu_data(),class_max_gpu_->gpu_data() + map_size,colour_threshold_);
+                    class_probabilities_gpu_->data_ptr<float>(),
+                    class_max_gpu_->data_ptr<float>(),map_size);
+  map->UpdateSurfelClassGpu(map_size,class_max_gpu_->data_ptr<float>(),class_max_gpu_->data_ptr<float>() + map_size,colour_threshold_);
 }
 
 void SemanticFusionInterface::CRFUpdate(const std::unique_ptr<ElasticFusionInterface>& map, const int iterations) {
@@ -160,7 +161,7 @@ void SemanticFusionInterface::CRFUpdate(const std::unique_ptr<ElasticFusionInter
   float * my_surfels = new float[current_table_size_ * 12];
   cudaMemcpy(my_surfels,surfel_map, sizeof(float) * current_table_size_ * 12, cudaMemcpyDeviceToHost);
   // Get the semantic table on CPU and add as unary potentials
-  float* prob_table = class_probabilities_gpu_->mutable_cpu_data();
+  float* prob_table = class_probabilities_gpu_->data_ptr<float>();
 
   std::vector<int> valid_ids;
   for (int i = 0; i < current_table_size_; ++i) {
@@ -178,7 +179,7 @@ void SemanticFusionInterface::CRFUpdate(const std::unique_ptr<ElasticFusionInter
   // Add pairwise energies
   crf.addPairwiseGaussian(my_surfels,3,valid_ids);
   crf.addPairwiseBilateral(my_surfels,10,valid_ids);
-  // Finally read the values back to the probability table 
+  // Finally read the values back to the probability table
   float* resulting_probs = crf.runInference(iterations, 1.0);
   for (int i = 0; i < static_cast<int>(valid_ids.size()); ++i) {
     for (int j = 0; j < num_classes_; ++j) {
@@ -189,16 +190,16 @@ void SemanticFusionInterface::CRFUpdate(const std::unique_ptr<ElasticFusionInter
       }
     }
   }
-  const float* gpu_prob_table = class_probabilities_gpu_->gpu_data();
-  float* gpu_max_map = class_max_gpu_->mutable_gpu_data();
+  const float* gpu_prob_table = class_probabilities_gpu_->data_ptr<float>();
+  float* gpu_max_map = class_max_gpu_->data_ptr<float>();
   updateMaxClass(current_table_size_,gpu_prob_table,num_classes_,gpu_max_map,max_components_);
-  map->UpdateSurfelClassGpu(max_components_,class_max_gpu_->gpu_data(),class_max_gpu_->gpu_data() + max_components_,colour_threshold_);
+  map->UpdateSurfelClassGpu(max_components_,class_max_gpu_->data_ptr<float>(),class_max_gpu_->data_ptr<float>() + max_components_,colour_threshold_);
   delete [] my_surfels;
 }
 
 void SemanticFusionInterface::SaveArgMaxPredictions(std::string& filename,const std::unique_ptr<ElasticFusionInterface>& map) {
-  const float* max_prob = class_max_gpu_->cpu_data() + max_components_;
-  const float* max_class = class_max_gpu_->cpu_data();
+  const float* max_prob = class_max_gpu_->data_ptr<float>() + max_components_;
+  const float* max_class = class_max_gpu_->data_ptr<float>();
   const std::vector<int>& surfel_ids = map->GetSurfelIdsCpu();
   cv::Mat argmax_image(240,320,CV_8UC3);
   for (int h = 0; h < 240; ++h) {
